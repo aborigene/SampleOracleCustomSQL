@@ -1,0 +1,170 @@
+name: custom:db.oracle.sql.extension
+version: 0.1.0
+minDynatraceVersion: "1.331.0"
+author:
+  name: Your Name
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Oracle Custom SQL Extension
+#
+# This extension runs SQL queries against an Oracle database and
+# sends results to Dynatrace as either LOGS or METRICS.
+#
+# Connection details (host, port, username, password, service name)
+# are configured in the Monitoring Configuration inside Dynatrace —
+# nothing in this file needs to change for different environments.
+#
+# Required Oracle privileges for the monitoring user:
+#   GRANT CREATE SESSION TO monitoring_user;
+#   GRANT SELECT ON V_$SESSION TO monitoring_user;
+#   GRANT SELECT ON V_$SQL     TO monitoring_user;
+#   GRANT SELECT ON V_$SYSSTAT TO monitoring_user;
+#   GRANT SELECT ON V_$WAITSTAT TO monitoring_user;
+# ═══════════════════════════════════════════════════════════════════
+
+sqlOracle:
+
+  # ─────────────────────────────────────────────────────────────────
+  # EXAMPLE 1 — Ingest query results as LOGS
+  #
+  # Queries active Oracle sessions every minute and sends each row
+  # to Dynatrace as a structured log entry. Logs can then be
+  # processed through OpenPipeline (e.g., to create Business Events
+  # or custom metrics from log data).
+  # ─────────────────────────────────────────────────────────────────
+  - group: active_sessions_log
+    interval:
+      minutes: 1
+    ingest: log
+    query: |
+      SELECT
+        s.SID,
+        s.SERIAL#,
+        s.USERNAME,
+        s.STATUS,
+        s.MACHINE,
+        s.PROGRAM,
+        s.SQL_ID,
+        s.LAST_CALL_ET,
+        TO_CHAR(SYSDATE, 'YYYY-MM-DD HH24:MI:SS') AS QUERY_TIME,
+        'oracle_active_session' AS event_type
+      FROM V$SESSION s
+      WHERE s.STATUS = 'ACTIVE'
+        AND s.USERNAME IS NOT NULL
+        AND ROWNUM <= 100
+    attributes:
+      # "content" drives the log message visible in Dynatrace Logs
+      - key: content
+        value: col:event_type
+      - key: db.session.id
+        value: col:SID
+      - key: db.session.serial
+        value: col:SERIAL#
+      - key: db.user
+        value: col:USERNAME
+      - key: db.session.status
+        value: col:STATUS
+      - key: db.session.machine
+        value: col:MACHINE
+      - key: db.session.program
+        value: col:PROGRAM
+      - key: db.sql.id
+        value: col:SQL_ID
+      - key: db.session.duration_seconds
+        value: col:LAST_CALL_ET
+      - key: db.query_time
+        value: col:QUERY_TIME
+
+  # ─────────────────────────────────────────────────────────────────
+  # EXAMPLE 2 — Ingest query results as METRICS
+  #
+  # Collects Oracle session and wait statistics every minute and
+  # sends them as Dynatrace metrics. These appear under
+  # custom:oracle.* in metrics explorer and can be used in
+  # dashboards and Davis AI anomaly detection.
+  # ─────────────────────────────────────────────────────────────────
+  - group: session_count_metric
+    interval:
+      minutes: 1
+    ingest: metric
+    query: |
+      SELECT
+        COUNT(*) AS total_active_sessions
+      FROM V$SESSION
+      WHERE STATUS = 'ACTIVE'
+        AND USERNAME IS NOT NULL
+    metrics:
+      - key: custom:oracle.sessions.active
+        value: col:total_active_sessions
+        type: gauge
+
+  - group: waiting_sessions_metric
+    interval:
+      minutes: 1
+    ingest: metric
+    query: |
+      SELECT
+        COUNT(*) AS waiting_sessions
+      FROM V$SESSION
+      WHERE STATUS = 'ACTIVE'
+        AND USERNAME IS NOT NULL
+        AND WAIT_CLASS != 'Idle'
+    metrics:
+      - key: custom:oracle.sessions.waiting
+        value: col:waiting_sessions
+        type: gauge
+
+  # ─────────────────────────────────────────────────────────────────
+  # EXAMPLE 3 — Long-running query detection (as LOG)
+  #
+  # Detects SQL statements running longer than 60 seconds and sends
+  # them as log entries. Useful for alerting on runaway queries.
+  # ─────────────────────────────────────────────────────────────────
+  - group: long_running_queries_log
+    interval:
+      minutes: 5
+    ingest: log
+    query: |
+      SELECT
+        s.SID,
+        s.SERIAL#,
+        s.USERNAME,
+        s.LAST_CALL_ET,
+        s.SQL_ID,
+        SUBSTR(q.SQL_TEXT, 1, 200) AS SQL_TEXT,
+        s.MACHINE,
+        TO_CHAR(SYSDATE, 'YYYY-MM-DD HH24:MI:SS') AS DETECTED_AT,
+        'oracle_long_running_query' AS event_type
+      FROM V$SESSION s
+      LEFT JOIN V$SQL q ON s.SQL_ID = q.SQL_ID AND q.CHILD_NUMBER = 0
+      WHERE s.STATUS = 'ACTIVE'
+        AND s.USERNAME IS NOT NULL
+        AND s.LAST_CALL_ET > 60
+    attributes:
+      - key: content
+        value: col:event_type
+      - key: db.session.id
+        value: col:SID
+      - key: db.session.serial
+        value: col:SERIAL#
+      - key: db.user
+        value: col:USERNAME
+      - key: db.sql.duration_seconds
+        value: col:LAST_CALL_ET
+      - key: db.sql.id
+        value: col:SQL_ID
+      - key: db.sql.text
+        value: col:SQL_TEXT
+      - key: db.session.machine
+        value: col:MACHINE
+      - key: db.detected_at
+        value: col:DETECTED_AT
+
+  # ─────────────────────────────────────────────────────────────────
+  # ADD YOUR OWN QUERIES BELOW
+  #
+  # Copy one of the templates above and replace the SQL with your
+  # own query. See the README section "Adding More Queries" for
+  # detailed guidance and examples.
+  # ─────────────────────────────────────────────────────────────────
