@@ -232,19 +232,36 @@ sudo chmod 644 \
   /var/lib/dynatrace/remotepluginmodule/agent/conf/certificates/ca.pem
 ```
 
-### Step 4.3 — Restart ActiveGate
+### Step 4.3 — Verify (restart only if needed)
+
+A restart is normally not required. Check the file and permissions:
+
+```bash
+ls -l /var/lib/dynatrace/remotepluginmodule/agent/conf/certificates/ca.pem
+```
+
+If the extension still reports a certificate/signature error, restart the ActiveGate (this restarts the Extension Execution Controller):
 
 ```bash
 sudo systemctl restart dynatracegateway
-```
-
-Verify the service restarted cleanly:
-
-```bash
 sudo systemctl status dynatracegateway
 ```
 
-> **Note:** Only `ca.pem` is needed on the ActiveGate. The private key (`ca.key`) must never leave your development machine.
+### Windows ActiveGate
+
+Copy `ca.pem` into `%PROGRAMDATA%\dynatrace\remotepluginmodule\agent\conf\certificates\` (typically `C:\ProgramData\dynatrace\remotepluginmodule\agent\conf\certificates\`). The file must be readable by `LOCAL_SERVICE` (file Properties > Security). Restart the **Dynatrace ActiveGate** service only if the extension still fails.
+
+### Does `agctl` replace these steps?
+
+No. The `agctl` CLI (ActiveGate 1.333+) manages ActiveGate configuration (`group`, `network-zone`, `modules`, `trust-store`, `ssl-certificate`, `property`, ...), but it has **no command for Extensions 2.0 signing certificates**. `agctl trust-store` configures the ActiveGate's own TLS truststore, which is a different mechanism. Copying `ca.pem` into the `remotepluginmodule` certificates directory remains the documented method ([agctl reference](https://docs.dynatrace.com/docs/ingest-from/dynatrace-activegate/agctl-command-line-interface), [Extensions 2.0 signing](https://docs.dynatrace.com/docs/ingest-from/extensions20/sign-extension)).
+
+List your ActiveGate versions and OS with dtctl:
+
+```bash
+dtctl query 'smartscapeNodes ACTIVEGATE | fields name, dt.active_gate.version, dt.active_gate.group.name, os.type'
+```
+
+> **Note:** Only `ca.pem` is needed on the ActiveGate, on **every** ActiveGate in the group that runs the extension. The private key (`ca.key`) must never leave your development machine.
 
 ---
 
